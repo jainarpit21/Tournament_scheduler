@@ -115,17 +115,38 @@ def create_csv(schedule):
 # Streamlit UI
 def main():
     st.set_page_config(page_title="Cricket Tournament Scheduler", layout="wide", initial_sidebar_state="expanded")
-    st.title("Cricket Tournament Scheduler")
+    st.markdown(
+        """
+        <style>
+        .main {
+            background-color: #f0f2f6;
+            font-family: 'Arial', sans-serif;
+            color: #333333;
+        }
+        h1, h2, h3 {
+            color: #4b72e0;
+            font-family: 'Verdana', sans-serif;
+        }
+        .css-1q8dd3e {
+            background-color: #e6f7ff !important;
+            border-radius: 15px;
+            padding: 15px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
+    st.title("🏏 Cricket Tournament Scheduler")
     st.header("Tournament Setup")
-    start_date = st.date_input("Select Tournament Start Date", datetime(2024, 8, 1))
-    end_date = st.date_input("Select Tournament End Date", datetime(2024, 9, 30))
+
+    # Updated default dates to start from today
+    start_date = st.date_input("Select Tournament Start Date", datetime.now())
+    end_date = st.date_input("Select Tournament End Date", datetime.now() + timedelta(days=30))
 
     num_teams = st.number_input("Number of teams", min_value=2, max_value=16, value=8, step=1)
 
     teams = []
     for i in range(num_teams):
-        team_name = st.text_input(f"Enter name for Team {i+1}", f"Team {chr(65 + i)}")
+        team_name = st.text_input(f"Enter name for Team {i+1}", f"Team {chr(65 + i)}", key=f"team_{i}")
         teams.append(team_name)
 
     max_matches_per_week = st.number_input("Maximum matches per week", min_value=1, max_value=2, value=2, step=1)
@@ -134,13 +155,13 @@ def main():
     teams_preferences = {}
 
     for team in teams:
-        st.subheader(f"{team}'s Preferences")
+        st.subheader(f"⚙️ {team}'s Preferences")
         team_pref = {}
         for day in days_of_week:
-            slots = st.multiselect(f"Select slots for {team} on {day}", time_slots)
+            slots = st.multiselect(f"Select slots for {team} on {day}", time_slots, key=f"{team}_{day}")
             team_pref[day] = slots
 
-        exceptions = st.text_area(f"Enter exception dates for {team} (YYYY-MM-DD, comma-separated)", "")
+        exceptions = st.text_area(f"Enter exception dates for {team} (YYYY-MM-DD, comma-separated)", "", key=f"{team}_exceptions")
         exception_days = [date.strip() for date in exceptions.split(",") if date.strip()]
 
         # Include days with selected slots only
@@ -150,19 +171,30 @@ def main():
     # Schedule and Reset Buttons
     col1, col2 = st.columns([3, 1])
     with col1:
-        if st.button("Generate Schedule"):
-            st.write("Scheduling matches...")
+        if st.button("📅 Generate Schedule"):
+            st.write("Generating match schedule...")
             schedule = schedule_matches(start_date, end_date, teams, teams_preferences, max_matches_per_week)
 
-            st.write("Match Schedule")
+            st.write("## Match Schedule")
             for match in schedule:
-                st.write(f"{match['team1']} vs {match['team2']} on {match['date']} ({match['day']}) at {match['ground']} during {match['slot']} slot")
+                if match['date']:
+                    st.markdown(f"""
+                        🎮 **{match['team1']} vs {match['team2']}**  
+                        📅 Date: {match['date']} ({match['day']})  
+                        🏟️ Ground: {match['ground']}  
+                        ⏰ Slot: {match['slot']}
+                    """)
+                else:
+                    st.markdown(f"""
+                        ⚠️ **{match['team1']} vs {match['team2']}**  
+                        🚫 Could not be scheduled due to unavailability of slots.
+                    """)
 
             csv = create_csv(schedule)
-            st.download_button(label="Download Schedule as CSV", data=csv, file_name="tournament_schedule.csv", mime="text/csv")
+            st.download_button(label="💾 Download Schedule as CSV", data=csv, file_name="tournament_schedule.csv", mime="text/csv")
     
     with col2:
-        if st.button("Reset"):
+        if st.button("🔄 Reset"):
             st.experimental_rerun()
 
 if __name__ == "__main__":
