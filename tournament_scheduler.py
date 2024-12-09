@@ -18,22 +18,14 @@ def assign_ground(grounds_played, date, ground_usage):
     available_grounds = [ground for ground in grounds if ground_usage[date][ground] < 1]
     return min(available_grounds, key=lambda ground: grounds_played.get(ground, 0)) if available_grounds else None
 
-# Choose the least-used day from selected days for balanced distribution
-def choose_least_used_day(selected_days, days_played):
-    available_days = [(day, days_played.get(day, 0)) for day in selected_days]
-    random.shuffle(available_days)  # Randomize to avoid bias
-    return min(available_days, key=lambda x: x[1])[0]
-
 # Check matches per week with specific logic
 def can_schedule_match_this_week(team, date, matches_played, max_matches_per_week):
     week_start = date - timedelta(days=date.weekday())
     week_end = week_start + timedelta(days=6)
     week_matches = matches_played[team].get((week_start, week_end), 0)
-    if max_matches_per_week == 1 and week_matches >= 1:
-        return False
-    return True
+    return week_matches < max_matches_per_week
 
-# Main scheduling function
+# Main scheduling function with improved day distribution logic
 def schedule_matches(start_date, end_date, teams, teams_preferences, max_matches_per_week):
     schedule = []
     match_pairs = generate_round_robin(teams)
@@ -44,64 +36,88 @@ def schedule_matches(start_date, end_date, teams, teams_preferences, max_matches
     grounds_played = {team: {ground: 0 for ground in grounds} for team in teams}
     days_played = {team: {day: 0 for day in days_of_week} for team in teams}
     matches_played = {team: {} for team in teams}
-    last_match_date = {team: None for team in teams}
 
-    # Schedule each pair
+    # Step 1: Prioritize distribution of matches across multiple preferred days
+    unscheduled_matches = []
     for pair in match_pairs:
         scheduled = False
-        date = start_date
+        team1_days = list(teams_preferences[pair[0]].keys())
+        team2_days = list(teams_preferences[pair[1]].keys())
+        common_days = list(set(team1_days) & set(team2_days))
+        
+        # Sort days by usage to prioritize the least-used days
+        random.shuffle(common_days)  # Add randomness to avoid bias
+        sorted_days = sorted(common_days, key=lambda day: days_played[pair[0]].get(day, 0) + days_played[pair[1]].get(day, 0))
+        
+        for day in sorted_days:
+            for date in ground_availability.keys():
+                if date.strftime("%A") == day:
+                    if (
+                        date.strftime("%Y-%m-%d") not in teams_preferences[pair[0]]["exceptions"]
+                        and date.strftime("%Y-%m-%d") not in teams_preferences[pair[1]]["exceptions"]
+                        and can_schedule_match_this_week(pair[0], date, matches_played, max_matches_per_week)
+                        and can_schedule_match_this_week(pair[1], date, matches_played, max_matches_per_week)
+                    ):
+                        team1_slots = teams_preferences[pair[0]].get(day, [])
+                        team2_slots = teams_preferences[pair[1]].get(day, [])
+                        available_slots = set(ground_availability[date]) & set(team1_slots) & set(team2_slots)
 
-        while date <= end_date and not scheduled:
-            day_name = date.strftime("%A")
-            if (
-                date.strftime("%Y-%m-%d") not in teams_preferences[pair[0]]["exceptions"]
-                and date.strftime("%Y-%m-%d") not in teams_preferences[pair[1]]["exceptions"]
-                and can_schedule_match_this_week(pair[0], date, matches_played, max_matches_per_week)
-                and can_schedule_match_this_week(pair[1], date, matches_played, max_matches_per_week)
-            ):
-                # Determine the least-used day for both teams that is available
-                if day_name in teams_preferences[pair[0]] and day_name in teams_preferences[pair[1]]:
-                    team1_slots = teams_preferences[pair[0]].get(day_name, [])
-                    team2_slots = teams_preferences[pair[1]].get(day_name, [])
-                    available_slots = set(ground_availability[date]) & set(team1_slots) & set(team2_slots)
+                        if available_slots:
+                            slot = random.choice(list(available_slots))
+                            ground = assign_ground(grounds_played[pair[0]], date, ground_usage)
+                            if ground:
+                                grounds_played[pair[0]][ground] += 1
+                                grounds_played[pair[1]][ground] += 1
+                                ground_usage[date][ground] += 1
 
-                    if available_slots:
-                        slot = available_slots.pop()
-                        ground = assign_ground(grounds_played[pair[0]], date, ground_usage)
-                        if ground:
-                            grounds_played[pair[0]][ground] += 1
-                            grounds_played[pair[1]][ground] += 1
-                            ground_usage[date][ground] += 1
+                                # Schedule match
+                                schedule.append({
+                                    "team1": pair[0],
+                                    "team2": pair[1],
+                                    "ground": ground,
+                                    "date": date.strftime("%Y-%m-%d"),
+                                    "day": day,
+                                    "slot": slot
+                                })
 
-                            # Schedule match
-                            schedule.append({
-                                "team1": pair[0],
-                                "team2": pair[1],
-                                "ground": ground,
-                                "date": date.strftime("%Y-%m-%d"),
-                                "day": day_name,
-                                "slot": slot
-                            })
-
-                            ground_availability[date].remove(slot)
-                            week_start = date - timedelta(days=date.weekday())
-                            matches_played[pair[0]][(week_start, week_start + timedelta(days=6))] = matches_played[pair[0]].get((week_start, week_start + timedelta(days=6)), 0) + 1
-                            matches_played[pair[1]][(week_start, week_start + timedelta(days=6))] = matches_played[pair[1]].get((week_start, week_start + timedelta(days=6)), 0) + 1
-                            days_played[pair[0]][day_name] += 1
-                            days_played[pair[1]][day_name] += 1
-                            scheduled = True
-                            break
-            date += timedelta(days=1)
+                                ground_availability[date].remove(slot)
+                                week_start = date - timedelta(days=date.weekday())
+                                matches_played[pair[0]][(week_start, week_start + timedelta(days=6))] = matches_played[pair[0]].get((week_start, week_start + timedelta(days=6)), 0) + 1
+                                matches_played[pair[1]][(week_start, week_start + timedelta(days=6))] = matches_played[pair[1]].get((week_start, week_start + timedelta(days=6)), 0) + 1
+                                days_played[pair[0]][day] += 1
+                                days_played[pair[1]][day] += 1
+                                scheduled = True
+                                break
+                if scheduled:
+                    break
+            if scheduled:
+                break
 
         if not scheduled:
-            schedule.append({
-                "team1": pair[0],
-                "team2": pair[1],
-                "ground": "",
-                "date": "",
-                "day": "",
-                "slot": ""
-            })
+            unscheduled_matches.append(pair)
+
+    # Step 2: Fallback logic for unscheduled matches
+    for pair in unscheduled_matches:
+        for date in ground_availability.keys():
+            day_name = date.strftime("%A")
+            team1_slots = teams_preferences[pair[0]].get(day_name, [])
+            team2_slots = teams_preferences[pair[1]].get(day_name, [])
+            available_slots = set(ground_availability[date]) & set(team1_slots) & set(team2_slots)
+
+            if available_slots:
+                slot = random.choice(list(available_slots))
+                ground = assign_ground(grounds_played[pair[0]], date, ground_usage)
+                if ground:
+                    schedule.append({
+                        "team1": pair[0],
+                        "team2": pair[1],
+                        "ground": ground,
+                        "date": date.strftime("%Y-%m-%d"),
+                        "day": day_name,
+                        "slot": slot
+                    })
+
+                    break
 
     return schedule
 
@@ -115,30 +131,9 @@ def create_csv(schedule):
 # Streamlit UI
 def main():
     st.set_page_config(page_title="Cricket Tournament Scheduler", layout="wide", initial_sidebar_state="expanded")
-    st.markdown(
-        """
-        <style>
-        .main {
-            background-color: #f0f2f6;
-            font-family: 'Arial', sans-serif;
-            color: #333333;
-        }
-        h1, h2, h3 {
-            color: #4b72e0;
-            font-family: 'Verdana', sans-serif;
-        }
-        .css-1q8dd3e {
-            background-color: #e6f7ff !important;
-            border-radius: 15px;
-            padding: 15px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
     st.title("🏏 Cricket Tournament Scheduler")
     st.header("Tournament Setup")
 
-    # Updated default dates to start from today
     start_date = st.date_input("Select Tournament Start Date", datetime.now())
     end_date = st.date_input("Select Tournament End Date", datetime.now() + timedelta(days=30))
 
@@ -149,7 +144,7 @@ def main():
         team_name = st.text_input(f"Enter name for Team {i+1}", f"Team {chr(65 + i)}", key=f"team_{i}")
         teams.append(team_name)
 
-    max_matches_per_week = st.number_input("Maximum matches per week", min_value=1, max_value=2, value=2, step=1)
+    max_matches_per_week = st.number_input("Maximum matches per week", min_value=1, max_value=2, value=1, step=1)
 
     st.header("Team Preferences")
     teams_preferences = {}
@@ -164,32 +159,13 @@ def main():
         exceptions = st.text_area(f"Enter exception dates for {team} (YYYY-MM-DD, comma-separated)", "", key=f"{team}_exceptions")
         exception_days = [date.strip() for date in exceptions.split(",") if date.strip()]
 
-        # Include days with selected slots only
         teams_preferences[team] = {day: team_pref[day] for day in days_of_week if team_pref[day]}
         teams_preferences[team]["exceptions"] = exception_days
 
-    # Schedule and Reset Buttons
     col1, col2 = st.columns([3, 1])
     with col1:
         if st.button("📅 Generate Schedule"):
-            st.write("Generating match schedule...")
             schedule = schedule_matches(start_date, end_date, teams, teams_preferences, max_matches_per_week)
-
-            st.write("## Match Schedule")
-            for match in schedule:
-                if match['date']:
-                    st.markdown(f"""
-                        🎮 **{match['team1']} vs {match['team2']}**  
-                        📅 Date: {match['date']} ({match['day']})  
-                        🏟️ Ground: {match['ground']}  
-                        ⏰ Slot: {match['slot']}
-                    """)
-                else:
-                    st.markdown(f"""
-                        ⚠️ **{match['team1']} vs {match['team2']}**  
-                        🚫 Could not be scheduled due to unavailability of slots.
-                    """)
-
             csv = create_csv(schedule)
             st.download_button(label="💾 Download Schedule as CSV", data=csv, file_name="tournament_schedule.csv", mime="text/csv")
     
