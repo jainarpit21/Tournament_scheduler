@@ -119,10 +119,19 @@ def schedule_matches(start_date, end_date, teams, teams_preferences, max_matches
 
                     break
 
-    return schedule
+    return schedule, unscheduled_matches
 
 # CSV creation
-def create_csv(schedule):
+def create_csv(schedule, unscheduled_matches):
+    for pair in unscheduled_matches:
+        schedule.append({
+            "team1": pair[0],
+            "team2": pair[1],
+            "ground": "",
+            "date": "",
+            "day": "",
+            "slot": ""
+        })
     df = pd.DataFrame(schedule)
     df.columns = ["Team 1", "Team 2", "Ground", "Date", "Day", "Slot"]
     csv = df.to_csv(index=False)
@@ -165,8 +174,8 @@ def main():
     col1, col2 = st.columns([3, 1])
     with col1:
         if st.button("📅 Generate Schedule"):
-            schedule = schedule_matches(start_date, end_date, teams, teams_preferences, max_matches_per_week)
-            csv = create_csv(schedule)
+            schedule, unscheduled_matches = schedule_matches(start_date, end_date, teams, teams_preferences, max_matches_per_week)
+            csv = create_csv(schedule, unscheduled_matches)
             st.download_button(label="💾 Download Schedule as CSV", data=csv, file_name="tournament_schedule.csv", mime="text/csv")
     
     with col2:
